@@ -1,0 +1,67 @@
+version: '3'
+
+services:
+
+  solana-test-validator:
+    image: tsumori-io/solana-test-validator
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: solana-test-validator
+    restart: unless-stopped
+    ports:
+      - "8899:8899" # http json rpc
+      - "8900:8900" # ws json rpc
+    command: ["--reset"]
+    # volumes:
+    #   - ${PWD}/test-ledger/:/test-ledger/:rw
+    #   - test-ledger:/test-ledger
+  
+  # prometheus solana exporter
+  solana-exporter:
+    image: rustiq/solana-exporter:0.4.1
+    container_name: solana-exporter
+    restart: unless-stopped
+    ports:
+      - "9179:9179"
+    volumes:
+      - ${PWD}/solana-exporter/config.toml:/etc/solana-exporter/config.toml:ro
+      - ${PWD}/solana-exporter/data:/exporter
+    depends_on:
+      - solana-test-validator
+
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    command: --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus --web.console.libraries=/usr/share/prometheus/console_libraries --web.console.templates=/usr/share/prometheus/consoles --web.enable-remote-write-receiver --enable-feature=otlp-write-receiver
+    volumes:
+      - ${PWD}/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - solana-exporter
+
+  # alertmanager:
+  #   image: prom/alertmanager:latest
+  #   restart: unless-stopped
+  #   # volumes:
+  #   #   - ${PWD}/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+  #   ports:
+  #     - "9093:9093"
+  #   depends_on:
+  #     - prometheus
+
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+    volumes:
+      # - ${PWD}/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ${PWD}/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      # - ${PWD}/grafana/dashboards/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus

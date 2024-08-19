@@ -1,0 +1,9 @@
+rpc = 'http://host.docker.internal:8899'
+target = '0.0.0.0:9179'
+vote_account_whitelist = []
+staking_account_whitelist = []
+
+[maxmind]
+username = 'username'
+password = 'password'
+
