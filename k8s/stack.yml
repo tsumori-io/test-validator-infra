@@ -1,0 +1,317 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: solana-test-validator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: solana-test-validator
+  template:
+    metadata:
+      labels:
+        app: solana-test-validator
+    spec:
+      containers:
+      - name: solana-test-validator
+        image: tsumori-io/solana-test-validator:latest
+        imagePullPolicy: IfNotPresent  # This is important for using local images
+        args: ["--reset"]
+        ports:
+        - containerPort: 8899
+        - containerPort: 8900
+        volumeMounts:
+        - name: test-ledger
+          mountPath: /test-ledger
+      # sidecar prometheus exporter for solana test validator
+      - name: solana-exporter
+        image: rustiq/solana-exporter:0.4.1
+        ports:
+        - containerPort: 9179
+        volumeMounts:
+        - name: exporter-config
+          mountPath: /etc/solana-exporter/config.toml
+          subPath: config.toml
+        - name: exporter-data
+          mountPath: /exporter
+      volumes:
+      - name: test-ledger
+        persistentVolumeClaim:
+          claimName: solana-test-ledger-pvc
+      - name: exporter-config
+        configMap:
+          name: solana-exporter-config
+      - name: exporter-data
+        persistentVolumeClaim:
+          claimName: solana-exporter-pvc
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: solana-exporter-config
+data:
+  config.toml: |
+    rpc = 'http://localhost:8899'
+    target = '0.0.0.0:9179'
+    vote_account_whitelist = []
+    staking_account_whitelist = []
+
+    [maxmind]
+    username = 'username'
+    password = 'password'
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: solana-test-ledger-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: solana-exporter-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: solana-test-validator
+spec:
+  selector:
+    app: solana-test-validator
+  ports:
+    - name: http-rpc
+      port: 8899
+      targetPort: 8899
+    - name: ws-rpc
+      port: 8900
+      targetPort: 8900
+    - name: exporter
+      port: 9179
+      targetPort: 9179
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+      - name: prometheus
+        image: prom/prometheus:latest
+        args:
+        - "--config.file=/etc/prometheus/prometheus.yml"
+        - "--storage.tsdb.path=/prometheus"
+        - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+        - "--web.console.templates=/usr/share/prometheus/consoles"
+        - "--web.enable-remote-write-receiver"
+        - "--web.external-url=/prometheus"               # TODO: Change path here
+        - "--enable-feature=otlp-write-receiver"
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus/prometheus.yml
+          subPath: prometheus.yml
+        - name: tsdb-storage
+          mountPath: /prometheus
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus-config
+      - name: tsdb-storage
+        persistentVolumeClaim:
+          claimName: prometheus-tsdb-pvc
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    scrape_configs:
+      - job_name: 'solana-exporter'
+        scrape_interval: 5s
+        static_configs:
+          - targets: ['solana-test-validator:9179']
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-tsdb-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_USER
+          value: admin
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          value: admin123
+        - name: GF_SERVER_ROOT_URL
+          value: "%(protocol)s://%(domain)s/grafana"         # TODO: Change path here
+        - name: GF_SERVER_SERVE_FROM_SUB_PATH
+          value: "true"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/grafana/provisioning/datasources/datasources.yml
+          subPath: datasources.yml
+        - name: dashboards-config
+          mountPath: /etc/grafana/provisioning/dashboards/dashboards.yml
+          subPath: dashboards.yml
+      volumes:
+      - name: config
+        configMap:
+          name: grafana-config
+      - name: dashboards-config
+        configMap:
+          name: grafana-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-config
+data:
+  datasources.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus:9090
+        access: proxy
+        isDefault: true
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: 'Default'
+        orgId: 1
+        folder: ''
+        folderUid: ''
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 10
+        allowUiUpdates: true
+        options:
+          path: /etc/grafana/provisioning/dashboards
+          foldersFromFilesStructure: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+spec:
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx
+  annotations:
+    ingress.kubernetes.io/ssl-redirect: "false"
+    traefik.ingress.kubernetes.io/router.middlewares: default-solana-exporter-rewrite@kubernetescrd
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /solana
+        pathType: Prefix
+        backend:
+          service:
+            name: solana-test-validator
+            port:
+              number: 8899
+      - path: /solana-ws
+        pathType: Prefix
+        backend:
+          service:
+            name: solana-test-validator
+            port:
+              number: 8900
+      - path: /solana-prometheus-exporter
+        pathType: Prefix 
+        backend:
+          service:
+            name: solana-test-validator
+            port:
+              number: 9179
+      - path: /prometheus
+        pathType: Prefix
+        backend:
+          service:
+            name: prometheus
+            port:
+              number: 9090
+      - path: /grafana
+        pathType: Prefix
+        backend:
+          service:
+            name: grafana
+            port:
+              number: 3000
+---
+# Note: middleware is required since the solana exporter service re-routes to /metrics (no way to configure this in the exporter)
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: solana-exporter-rewrite
+spec:
+  replacePathRegex:
+    regex: ^/solana-prometheus-exporter(.*)
+    replacement: /metrics$1
+---
