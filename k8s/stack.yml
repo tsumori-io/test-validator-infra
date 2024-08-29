@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: solana-test-validator
-        image: tsumori-io/solana-test-validator:latest
+        image: zeeshans/solana-test-validator:latest
         imagePullPolicy: IfNotPresent  # This is important for using local images
         args: ["--reset"]
         ports:
