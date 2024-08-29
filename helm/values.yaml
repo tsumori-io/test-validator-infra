@@ -1,0 +1,42 @@
+namespace: client-2
+
+solanaTestValidator:
+  image:
+    repository: zeeshans/solana-test-validator
+    tag: latest
+    pullPolicy: IfNotPresent
+  args:
+    - "--reset"
+  persistence:
+    size: 5Gi
+
+solanaExporter:
+  image:
+    repository: rustiq/solana-exporter
+    tag: 0.4.1
+  persistence:
+    size: 2Gi
+
+prometheus:
+  image:
+    repository: prom/prometheus
+    tag: latest
+  persistence:
+    size: 5Gi
+
+grafana:
+  image:
+    repository: grafana/grafana
+    tag: latest
+  adminUser: admin
+  adminPassword: admin123
+
+ingress:
+  enabled: true
+  annotations:
+    ingress.kubernetes.io/ssl-redirect: "false"
+    traefik.ingress.kubernetes.io/router.middlewares: default-solana-exporter-rewrite@kubernetescrd
+  prefix: "client-2"
+
+persistence:
+  storageClass: local-path

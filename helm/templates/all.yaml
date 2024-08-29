@@ -1,0 +1,357 @@
+---
+# Namespace
+{{- if ne .Values.namespace "default" }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace }}
+{{- end }}
+---
+# Deployments
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-solana-test-validator
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-solana-test-validator
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-solana-test-validator
+    spec:
+      containers:
+      - name: {{ .Release.Name }}-solana-test-validator
+        image: {{ .Values.solanaTestValidator.image.repository }}:{{ .Values.solanaTestValidator.image.tag }}
+        imagePullPolicy: {{ .Values.solanaTestValidator.image.pullPolicy }}
+        args: {{ .Values.solanaTestValidator.args }}
+        ports:
+        - containerPort: 8899
+        - containerPort: 8900
+        volumeMounts:
+        - name: test-ledger
+          mountPath: /test-ledger
+      - name: {{ .Release.Name }}-solana-exporter
+        image: {{ .Values.solanaExporter.image.repository }}:{{ .Values.solanaExporter.image.tag }}
+        ports:
+        - containerPort: 9179
+        volumeMounts:
+        - name: exporter-config
+          mountPath: /etc/solana-exporter/config.toml
+          subPath: config.toml
+        - name: exporter-data
+          mountPath: /exporter
+      volumes:
+      - name: test-ledger
+        persistentVolumeClaim:
+          claimName: {{ .Release.Name }}-solana-test-ledger-pvc
+      - name: exporter-config
+        configMap:
+          name: {{ .Release.Name }}-solana-exporter-config
+      - name: exporter-data
+        persistentVolumeClaim:
+          claimName: {{ .Release.Name }}-solana-exporter-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-prometheus
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-prometheus
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-prometheus
+    spec:
+      containers:
+      - name: {{ .Release.Name }}-prometheus
+        image: {{ .Values.prometheus.image.repository }}:{{ .Values.prometheus.image.tag }}
+        args:
+        - "--config.file=/etc/prometheus/prometheus.yml"
+        - "--storage.tsdb.path=/prometheus"
+        - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+        - "--web.console.templates=/usr/share/prometheus/consoles"
+        - "--web.enable-remote-write-receiver"
+        - "--web.external-url=/{{ .Values.ingress.prefix }}/prometheus"
+        - "--enable-feature=otlp-write-receiver"
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus/prometheus.yml
+          subPath: prometheus.yml
+        - name: tsdb-storage
+          mountPath: /prometheus
+      volumes:
+      - name: config
+        configMap:
+          name: {{ .Release.Name }}-prometheus-config
+      - name: tsdb-storage
+        persistentVolumeClaim:
+          claimName: {{ .Release.Name }}-prometheus-tsdb-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-grafana
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-grafana
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-grafana
+    spec:
+      containers:
+      - name: {{ .Release.Name }}-grafana
+        image: {{ .Values.grafana.image.repository }}:{{ .Values.grafana.image.tag }}
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_USER
+          value: {{ .Values.grafana.adminUser }}
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          value: {{ .Values.grafana.adminPassword }}
+        - name: GF_SERVER_ROOT_URL
+          value: "%(protocol)s://%(domain)s/{{ .Values.ingress.prefix }}/grafana"
+        - name: GF_SERVER_SERVE_FROM_SUB_PATH
+          value: "true"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/grafana/provisioning/datasources/datasources.yml
+          subPath: datasources.yml
+        - name: dashboards-config
+          mountPath: /etc/grafana/provisioning/dashboards/dashboards.yml
+          subPath: dashboards.yml
+      volumes:
+      - name: config
+        configMap:
+          name: {{ .Release.Name }}-grafana-config
+      - name: dashboards-config
+        configMap:
+          name: {{ .Release.Name }}-grafana-config
+
+---
+# Services
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-solana-test-validator
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: {{ .Release.Name }}-solana-test-validator
+  ports:
+    - name: http-rpc
+      port: 8899
+      targetPort: 8899
+    - name: ws-rpc
+      port: 8900
+      targetPort: 8900
+    - name: exporter
+      port: 9179
+      targetPort: 9179
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-prometheus
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: {{ .Release.Name }}-prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-grafana
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: {{ .Release.Name }}-grafana
+  ports:
+    - port: 3000
+      targetPort: 3000
+
+---
+# ConfigMaps
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-solana-exporter-config
+  namespace: {{ .Values.namespace }}
+data:
+  config.toml: |
+    rpc = 'http://localhost:8899'
+    target = '0.0.0.0:9179'
+    vote_account_whitelist = []
+    staking_account_whitelist = []
+
+    [maxmind]
+    username = 'username'
+    password = 'password'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-prometheus-config
+  namespace: {{ .Values.namespace }}
+data:
+  prometheus.yml: |
+    scrape_configs:
+      - job_name: 'solana-exporter'
+        scrape_interval: 5s
+        static_configs:
+          - targets: ['{{ .Release.Name }}-solana-test-validator:9179']
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-grafana-config
+  namespace: {{ .Values.namespace }}
+data:
+  datasources.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://{{ .Release.Name }}-prometheus:9090
+        access: proxy
+        isDefault: true
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: 'Default'
+        orgId: 1
+        folder: ''
+        folderUid: ''
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 10
+        allowUiUpdates: true
+        options:
+          path: /etc/grafana/provisioning/dashboards
+          foldersFromFilesStructure: true
+
+---
+# Persistent Volume Claims
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-solana-test-ledger-pvc
+  namespace: {{ .Values.namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.persistence.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.solanaTestValidator.persistence.size }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-solana-exporter-pvc
+  namespace: {{ .Values.namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.persistence.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.solanaExporter.persistence.size }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-prometheus-tsdb-pvc
+  namespace: {{ .Values.namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.persistence.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.prometheus.persistence.size }}
+
+---
+# Ingress
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-nginx
+  namespace: {{ .Values.namespace }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /{{ .Values.ingress.prefix }}/solana
+        pathType: Prefix
+        backend:
+          service:
+            name: {{ .Release.Name }}-solana-test-validator
+            port:
+              number: 8899
+      - path: /{{ .Values.ingress.prefix }}/solana-ws
+        pathType: Prefix
+        backend:
+          service:
+            name: {{ .Release.Name }}-solana-test-validator
+            port:
+              number: 8900
+      - path: /{{ .Values.ingress.prefix }}/solana-prometheus-exporter
+        pathType: Prefix 
+        backend:
+          service:
+            name: {{ .Release.Name }}-solana-test-validator
+            port:
+              number: 9179
+      - path: /{{ .Values.ingress.prefix }}/prometheus
+        pathType: Prefix
+        backend:
+          service:
+            name: {{ .Release.Name }}-prometheus
+            port:
+              number: 9090
+      - path: /{{ .Values.ingress.prefix }}/grafana
+        pathType: Prefix
+        backend:
+          service:
+            name: {{ .Release.Name }}-grafana
+            port:
+              number: 3000
+{{- end }}
+
+# ---
+# # Middleware
+# {{- if .Values.ingress.enabled }}
+#   {{- if ne .Values.namespace "default" }}
+#   apiVersion: traefik.containo.us/v1alpha1
+#   kind: Middleware
+#   metadata:
+#     name: solana-exporter-rewrite
+#     namespace: {{ .Values.namespace }}
+#   spec:
+#     replacePathRegex:
+#       regex: ^/{{ .Values.ingress.prefix }}/solana-prometheus-exporter(.*)
+#       replacement: /metrics$1
+#   {{- end }}
+# {{- end }}

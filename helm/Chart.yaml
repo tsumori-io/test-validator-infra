@@ -1,0 +1,5 @@
+apiVersion: v2
+name: solana-stack
+description: A Helm chart for Solana test validator and monitoring stack
+version: 0.1.0
+appVersion: "1.0.0"
