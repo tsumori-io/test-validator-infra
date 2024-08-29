@@ -15,13 +15,43 @@ The idea is to setup and run a test validator on a cloud provider (e.g. AWS) as 
 #### Build for `amd64`:
 
 ```sh
-docker build -t tsumori-io/solana-test-validator -f amd64.Dockerfile .
+docker build -t tsumori-io/solana-test-validator:latest-amd64 -f amd64.Dockerfile .
 ```
 
 #### Build for `arm64`:
 
 ```sh
-docker build -t tsumori-io/solana-test-validator -f arm64.Dockerfile .
+docker build -t tsumori-io/solana-test-validator:latest-arm64 -f arm64.Dockerfile .
+```
+
+### Pushing to ghcr
+
+#### Re-tag images for ghcr
+
+```sh
+docker tag tsumori-io/solana-test-validator:latest-amd64 ghcr.io/tsumori-io/test-validator-infra/solana-test-validator:latest-amd64
+docker tag tsumori-io/solana-test-validator:latest-arm64 ghcr.io/tsumori-io/test-validator-infra/solana-test-validator:latest-arm64
+```
+
+#### Push arch images to ghcr
+
+```sh
+docker push ghcr.io/tsumori-io/test-validator-infra/solana-test-validator:latest-amd64
+docker push ghcr.io/tsumori-io/test-validator-infra/solana-test-validator:latest-arm64
+```
+
+#### Create a manifest
+
+```sh
+docker manifest create ghcr.io/tsumori-io/test-validator-infra/solana-test-validator:latest \
+  ghcr.io/tsumori-io/test-validator-infra/solana-test-validator:latest-amd64 \
+  ghcr.io/tsumori-io/test-validator-infra/solana-test-validator:latest-arm64
+```
+
+#### Push manifest to ghcr
+
+```sh
+docker manifest push ghcr.io/tsumori-io/test-validator-infra/solana-test-validator:latest
 ```
 
 ### Run stack
@@ -53,4 +83,10 @@ k3d image import tsumori-io/solana-test-validator:latest -c test
 
 ```sh
 kubectl apply -f k8s/stack.yml
+```
+
+### Deploy using helm
+
+```sh
+helm install solana-stack ./helm --atomic
 ```
