@@ -38,5 +38,11 @@ ingress:
     traefik.ingress.kubernetes.io/router.middlewares: default-solana-exporter-rewrite@kubernetescrd
   prefix: "client-2"
 
+  # If you want to use Traefik as an ingress controller (using traefik.io/v1alpha1 IngressRoute) then
+  # set ingressRoute.enabled to true and provide the host name to be used.
+  ingressRoute:
+    enabled: false
+    # host: "your.domain.com"
+
 persistence:
   storageClass: local-path
